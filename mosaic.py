@@ -4,13 +4,20 @@ from PIL import Image
 from multiprocessing import Process, Queue, cpu_count
 
 # Change these 3 config parameters to suit your needs...
-TILE_SIZE      = 50		# height/width of mosaic tiles in pixels
-TILE_MATCH_RES = 5		# tile matching resolution (higher values give better fit but require more processing)
-ENLARGEMENT    = 8		# the mosaic image will be this many times wider and taller than the original
+TILE_SIZE_WIDTH  = 150  # height/width of mosaic tiles in pixels
+TILE_SIZE_HEIGHT = 50   # height/width of mosaic tiles in pixels
+TILE_MATCH_RES   = 5	  # tile matching resolution (higher values give better fit but require more processing)
+ENLARGEMENT      = 3    # the mosaic image will be this many times wider and taller than the original
 
-TILE_BLOCK_SIZE = TILE_SIZE / max(min(TILE_MATCH_RES, TILE_SIZE), 1)
+TILE_BLOCK_SIZE_WIDTH = TILE_SIZE_WIDTH / max(min(TILE_MATCH_RES, TILE_SIZE_WIDTH), 1)
+TILE_BLOCK_SIZE_HEIGHT = TILE_SIZE_HEIGHT / max(min(TILE_MATCH_RES, TILE_SIZE_HEIGHT), 1)
+RATIO = float(TILE_SIZE_HEIGHT) / float(TILE_SIZE_WIDTH);
+
 WORKER_COUNT = max(cpu_count() - 1, 1)
-OUT_FILE = 'mosaic.jpeg'
+
+# OUT_FILE = 'mosaic.jpeg'
+OUT_FILE = 'mosaic-s' + str(int(TILE_SIZE_WIDTH)) + '-r' + str(TILE_MATCH_RES) + '-e' + str(ENLARGEMENT) + '.jpeg';
+
 EOQ_VALUE = None
 
 class TileProcessor:
@@ -20,16 +27,22 @@ class TileProcessor:
 	def __process_tile(self, tile_path):
 		try:
 			img = Image.open(tile_path)
-			# tiles must be square, so get the largest square that fits inside the image
+			# Find the new dimentions realted to the ratio needs
 			w = img.size[0]
 			h = img.size[1]
-			min_dimension = min(w, h)
-			w_crop = (w - min_dimension) / 2
-			h_crop = (h - min_dimension) / 2
+
+			newW = w
+			newH = w * RATIO
+			if newH > h:
+				newW = h / RATIO
+				newH = h
+
+			w_crop = (w - newW) / 2
+			h_crop = (h - newH) / 2
 			img = img.crop((w_crop, h_crop, w - w_crop, h - h_crop))
 
-			large_tile_img = img.resize((TILE_SIZE, TILE_SIZE), Image.ANTIALIAS)
-			small_tile_img = img.resize((TILE_SIZE/TILE_BLOCK_SIZE, TILE_SIZE/TILE_BLOCK_SIZE), Image.ANTIALIAS)
+			large_tile_img = img.resize((TILE_SIZE_WIDTH, TILE_SIZE_HEIGHT), Image.ANTIALIAS)
+			small_tile_img = img.resize((TILE_SIZE_WIDTH/TILE_BLOCK_SIZE_WIDTH, TILE_SIZE_HEIGHT/TILE_BLOCK_SIZE_HEIGHT), Image.ANTIALIAS)
 
 			return (large_tile_img.convert('RGB'), small_tile_img.convert('RGB'))
 		except:
@@ -49,7 +62,7 @@ class TileProcessor:
 				if large_tile:
 					large_tiles.append(large_tile)
 					small_tiles.append(small_tile)
-		
+
 		print 'Processed %s tiles.' % (len(large_tiles),)
 
 		return (large_tiles, small_tiles)
@@ -64,14 +77,14 @@ class TargetImage:
 		w = img.size[0] * ENLARGEMENT
 		h = img.size[1]	* ENLARGEMENT
 		large_img = img.resize((w, h), Image.ANTIALIAS)
-		w_diff = (w % TILE_SIZE)/2
-		h_diff = (h % TILE_SIZE)/2
-		
+		w_diff = (w % TILE_SIZE_WIDTH)/2
+		h_diff = (h % TILE_SIZE_HEIGHT)/2
+
 		# if necesary, crop the image slightly so we use a whole number of tiles horizontally and vertically
 		if w_diff or h_diff:
 			large_img = large_img.crop((w_diff, h_diff, w - w_diff, h - h_diff))
 
-		small_img = large_img.resize((w/TILE_BLOCK_SIZE, h/TILE_BLOCK_SIZE), Image.ANTIALIAS)
+		small_img = large_img.resize((w/TILE_BLOCK_SIZE_WIDTH, h/TILE_BLOCK_SIZE_HEIGHT), Image.ANTIALIAS)
 
 		image_data = (large_img.convert('RGB'), small_img.convert('RGB'))
 
@@ -138,12 +151,12 @@ class ProgressCounter:
 class MosaicImage:
 	def __init__(self, original_img):
 		self.image = Image.new(original_img.mode, original_img.size)
-		self.x_tile_count = original_img.size[0] / TILE_SIZE
-		self.y_tile_count = original_img.size[1] / TILE_SIZE
+		self.x_tile_count = original_img.size[0] / TILE_SIZE_WIDTH
+		self.y_tile_count = original_img.size[1] / TILE_SIZE_HEIGHT
 		self.total_tiles  = self.x_tile_count * self.y_tile_count
 
 	def add_tile(self, tile_data, coords):
-		img = Image.new('RGB', (TILE_SIZE, TILE_SIZE))
+		img = Image.new('RGB', (TILE_SIZE_WIDTH, TILE_SIZE_HEIGHT))
 		img.putdata(tile_data)
 		self.image.paste(img, coords)
 
@@ -182,7 +195,7 @@ def compose(original_img, tiles):
 	all_tile_data_large = map(lambda tile : list(tile.getdata()), tiles_large)
 	all_tile_data_small = map(lambda tile : list(tile.getdata()), tiles_small)
 
-	work_queue   = Queue(WORKER_COUNT)	
+	work_queue   = Queue(WORKER_COUNT)
 	result_queue = Queue()
 
 	try:
@@ -196,8 +209,8 @@ def compose(original_img, tiles):
 		progress = ProgressCounter(mosaic.x_tile_count * mosaic.y_tile_count)
 		for x in range(mosaic.x_tile_count):
 			for y in range(mosaic.y_tile_count):
-				large_box = (x * TILE_SIZE, y * TILE_SIZE, (x + 1) * TILE_SIZE, (y + 1) * TILE_SIZE)
-				small_box = (x * TILE_SIZE/TILE_BLOCK_SIZE, y * TILE_SIZE/TILE_BLOCK_SIZE, (x + 1) * TILE_SIZE/TILE_BLOCK_SIZE, (y + 1) * TILE_SIZE/TILE_BLOCK_SIZE)
+				large_box = (x * TILE_SIZE_WIDTH, y * TILE_SIZE_HEIGHT, (x + 1) * TILE_SIZE_WIDTH, (y + 1) * TILE_SIZE_HEIGHT)
+				small_box = (x * TILE_SIZE_WIDTH/TILE_BLOCK_SIZE_WIDTH, y * TILE_SIZE_HEIGHT/TILE_BLOCK_SIZE_HEIGHT, (x + 1) * TILE_SIZE_WIDTH/TILE_BLOCK_SIZE_WIDTH, (y + 1) * TILE_SIZE_HEIGHT/TILE_BLOCK_SIZE_HEIGHT)
 				work_queue.put((list(original_img_small.crop(small_box).getdata()), large_box))
 				progress.update()
 
